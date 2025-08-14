@@ -2,7 +2,8 @@ import jwt from "jsonwebtoken";
 
 export function verifyToken(req, res, next) {
   const authHeader = req.headers.authorization;
-
+  console.log("AUTH HEADER RECEIVED:", authHeader);
+  
   if (!authHeader) {
     return res.status(401).json({ error: "Access denied. No token provided." });
   }
