@@ -1,4 +1,4 @@
--- Reset
+-- Reset (danger: drops all tables and their data)
 DROP TABLE IF EXISTS content_blocks CASCADE;
 DROP TABLE IF EXISTS sections CASCADE;
 DROP TABLE IF EXISTS comments CASCADE;
@@ -103,11 +103,3 @@ CREATE INDEX IF NOT EXISTS idx_comments_post_id_created ON comments(post_id, cre
 CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS sections_slug_uniq ON sections (lower(slug));
 CREATE INDEX IF NOT EXISTS idx_blocks_section_order ON content_blocks(section_id, order_index, created_at);
-
--- Initial sections
-INSERT INTO sections (slug, title) VALUES
-  ('about', 'About'),
-  ('hobbies', 'Hobbies'),
-  ('nutrition', 'Nutrition'),
-  ('ot-things', 'OT Things')
-ON CONFLICT (slug) DO NOTHING;
