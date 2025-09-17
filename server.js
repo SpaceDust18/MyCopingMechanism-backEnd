@@ -10,9 +10,10 @@ import authRoutes from "./api/routes/auth.js";
 import postsRoutes from "./api/routes/posts.js";
 import commentsRoutes from "./api/routes/comments.js";
 import sectionsRouter from "./api/routes/sections.js";
-import reflectionsRouter from "./api/routes/reflections.js"; // <-- add this route
+import reflectionsRouter from "./api/routes/reflections.js";
+import usersRouter from "./api/routes/users.js";
 
-// DB pool (adjust the path if your pool is elsewhere)
+// DB pool
 import pool from "./db/index.js";
 
 dotenv.config();
@@ -20,13 +21,38 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5050;
 
+/**
+ * Build an allowlist:
+ * - Any URLs listed in CLIENT_ORIGIN (comma-separated)
+ * - Common localhost dev origins (5173/5174 + 127.0.0.1)
+ */
+const envOrigins = (process.env.CLIENT_ORIGIN || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const DEV_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174",
+];
+
+const ALLOWED_ORIGINS = [...new Set([...DEV_ORIGINS, ...envOrigins])];
+
 // ----- Middleware -----
 app.use(
   cors({
-    origin: process.env.CLIENT_ORIGIN || "*",
+    origin: (origin, cb) => {
+      // Allow non-browser tools (curl/postman) with no Origin header
+      if (!origin) return cb(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      return cb(new Error(`CORS: ${origin} not allowed`), false);
+    },
     credentials: true,
   })
 );
+
 app.use(express.json());
 
 // ----- REST Routes -----
@@ -34,7 +60,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/posts", postsRoutes);
 app.use("/api/comments", commentsRoutes);
 app.use("/api/sections", sectionsRouter);
-app.use("/api/reflections", reflectionsRouter); // <-- reflections REST endpoints
+app.use("/api/reflections", reflectionsRouter);
+app.use("/api/users", usersRouter);
 
 // Health/test route
 app.get("/", (_req, res) => {
@@ -46,14 +73,17 @@ const server = http.createServer(app);
 
 const io = new SocketIOServer(server, {
   cors: {
-    origin: process.env.CLIENT_ORIGIN || "*",
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      return cb(new Error(`Socket.IO CORS: ${origin} not allowed`), false);
+    },
     credentials: true,
   },
 });
 
 // Socket.IO events for the single daily reflections chat
 io.on("connection", (socket) => {
-  // Join the one shared room for today's prompt
   socket.on("reflections:joinToday", async (_payload, ack) => {
     try {
       const { rows } = await pool.query(
@@ -72,7 +102,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Post a message to today's room and broadcast to all clients
   socket.on("reflections:messageToday", async (payload, ack) => {
     try {
       const { content, userId, username } = payload ?? {};
