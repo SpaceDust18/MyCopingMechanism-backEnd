@@ -38,20 +38,34 @@ export async function addComment(req, res) {
   }
 }
 
-// Delete a comment (only author can delete)
+// db/queries/comments.js
 export async function deleteComment(req, res) {
   const { id } = req.params;
   const userId = req.user.id;
+  const role = req.user.role;
+
   try {
-    const result = await pool.query(
-      `DELETE FROM comments
-       WHERE id = $1 AND user_id = $2
-       RETURNING *`,
-      [id, userId]
-    );
+    let result;
+    if (role === "admin") {
+      // Admin can delete any comment by id
+      result = await pool.query(
+        `DELETE FROM comments WHERE id = $1 RETURNING *`,
+        [id]
+      );
+    } else {
+      // Non-admin can delete only their own comment
+      result = await pool.query(
+        `DELETE FROM comments
+         WHERE id = $1 AND user_id = $2
+         RETURNING *`,
+        [id, userId]
+      );
+    }
+
     if (result.rows.length === 0) {
       return res.status(403).json({ error: "Not authorized or comment not found" });
     }
+
     res.json({ message: "Comment deleted successfully" });
   } catch (err) {
     console.error("Error deleting comment:", err);
