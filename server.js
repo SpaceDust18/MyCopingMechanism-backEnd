@@ -4,28 +4,23 @@ import http from "http";
 import cors from "cors";
 import dotenv from "dotenv";
 import { Server as SocketIOServer } from "socket.io";
+import jwt from "jsonwebtoken";
 
-// REST route modules
 import authRoutes from "./api/routes/auth.js";
 import postsRoutes from "./api/routes/posts.js";
 import commentsRoutes from "./api/routes/comments.js";
 import sectionsRouter from "./api/routes/sections.js";
 import reflectionsRouter from "./api/routes/reflections.js";
 import usersRouter from "./api/routes/users.js";
-import contactRouter from "./api/routes/contact.js"; // <-- contact route
+import contactRouter from "./api/routes/contact.js";
 
-// DB pool (used by reflections socket handlers)
 import pool from "./db/index.js";
 
 dotenv.config();
 
 const app = express();
 
-/**
- * Allowlist for CORS:
- * - Any URLs listed in CLIENT_ORIGIN (comma-separated)
- * - Common localhost dev origins (5173/5174 + 127.0.0.1)
- */
+// CORS allowlist
 const envOrigins = (process.env.CLIENT_ORIGIN || "")
   .split(",")
   .map((s) => s.trim())
@@ -40,11 +35,11 @@ const DEV_ORIGINS = [
 
 const ALLOWED_ORIGINS = [...new Set([...DEV_ORIGINS, ...envOrigins])];
 
-// ----- Middleware -----
+// Middleware 
 app.use(
   cors({
     origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // non-browser tools
+      if (!origin) return cb(null, true);
       if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
       return cb(new Error(`CORS: ${origin} not allowed`), false);
     },
@@ -54,14 +49,14 @@ app.use(
 
 app.use(express.json({ limit: "1mb" }));
 
-// ----- REST Routes -----
+// REST Routes 
 app.use("/api/auth", authRoutes);
 app.use("/api/posts", postsRoutes);
 app.use("/api/comments", commentsRoutes);
 app.use("/api/sections", sectionsRouter);
 app.use("/api/reflections", reflectionsRouter);
 app.use("/api/users", usersRouter);
-app.use("/api/contact", contactRouter); // <-- mounted
+app.use("/api/contact", contactRouter);
 
 // Health/test route
 app.get("/", (_req, res) => {
@@ -82,32 +77,53 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "Server error" });
 });
 
-// ----- HTTP + Socket.IO Server -----
+// HTTP + Socket.IO Server
 const server = http.createServer(app);
 
 const io = new SocketIOServer(server, {
+  path: "/socket.io",
   cors: {
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
       if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
       return cb(new Error(`Socket.IO CORS: ${origin} not allowed`), false);
     },
-    credentials: true,
+    credentials: false,
   },
 });
 
-// Socket.IO events for the single daily reflections chat
+// REQUIRE A VALID JWT TO CONNECT 
+io.use((socket, next) => { // Mandatory auth
+  try {
+    const token = socket.handshake?.auth?.token;
+    if (!token) return next(new Error("Unauthorized")); // Block anonymous
+
+    const secret = process.env.JWT_SECRET;
+    if (!secret) return next(new Error("Missing JWT_SECRET"));
+
+    const decoded = jwt.verify(token, secret);
+    socket.user = { id: decoded.id, username: decoded.username, role: decoded.role };
+    return next();
+  } catch {
+    return next(new Error("Unauthorized"));
+  }
+});
+
+// Utility: get today's daily_id or null
+async function getTodayDailyId() {
+  const { rows } = await pool.query(
+    `SELECT id FROM reflection_daily_prompts WHERE active_on = CURRENT_DATE`
+  );
+  return rows[0]?.id ?? null;
+}
+
 io.on("connection", (socket) => {
+  console.log("Socket connected:", socket.id, `(user ${socket.user.id})`);
+
   socket.on("reflections:joinToday", async (_payload, ack) => {
     try {
-      const { rows } = await pool.query(
-        `SELECT id FROM reflection_daily_prompts WHERE active_on = CURRENT_DATE`
-      );
-      if (!rows.length) {
-        ack?.({ ok: false, error: "No daily prompt" });
-        return;
-      }
-      const dailyId = rows[0].id;
+      const dailyId = await getTodayDailyId();
+      if (!dailyId) return ack?.({ ok: false, error: "No daily prompt" });
       socket.join(`daily_${dailyId}`);
       ack?.({ ok: true, dailyId });
     } catch (err) {
@@ -116,28 +132,23 @@ io.on("connection", (socket) => {
     }
   });
 
+  // CREATE message — user is guaranteed present by io.use
   socket.on("reflections:messageToday", async (payload, ack) => {
     try {
-      const { content, userId, username } = payload ?? {};
-      if (!content?.trim()) {
-        ack?.({ ok: false, error: "Empty message" });
-        return;
-      }
+      const content = String(payload?.content || "").trim();
+      if (!content) return ack?.({ ok: false, error: "Empty message" });
 
-      const today = await pool.query(
-        `SELECT id FROM reflection_daily_prompts WHERE active_on = CURRENT_DATE`
-      );
-      if (!today.rows.length) {
-        ack?.({ ok: false, error: "No daily prompt" });
-        return;
-      }
-      const dailyId = today.rows[0].id;
+      const dailyId = await getTodayDailyId();
+      if (!dailyId) return ack?.({ ok: false, error: "No daily prompt" });
+
+      const userId = socket.user.id;
+      const username = socket.user.username;
 
       const ins = await pool.query(
         `INSERT INTO reflection_daily_messages (daily_id, user_id, username, content)
          VALUES ($1, $2, $3, $4)
-         RETURNING id, username, content, created_at`,
-        [dailyId, userId ?? null, username ?? "Anonymous", content.trim()]
+         RETURNING id, user_id, username, content, created_at`,
+        [dailyId, userId, username, content]
       );
 
       const msg = ins.rows[0];
@@ -148,9 +159,75 @@ io.on("connection", (socket) => {
       ack?.({ ok: false, error: "Server error" });
     }
   });
+
+  // EDIT — owner or admin
+  socket.on("reflections:message:update", async (payload, ack) => {
+    try {
+      const { id, content } = payload ?? {};
+      if (!id || !String(content || "").trim()) {
+        return ack?.({ ok: false, error: "Bad payload" });
+      }
+
+      const found = await pool.query(
+        `SELECT id, daily_id, user_id FROM reflection_daily_messages WHERE id = $1`,
+        [id]
+      );
+      if (!found.rows.length) return ack?.({ ok: false, error: "Not found" });
+
+      const isOwner = found.rows[0].user_id === socket.user.id;
+      const isAdmin = socket.user.role === "admin";
+      if (!isOwner && !isAdmin) return ack?.({ ok: false, error: "Forbidden" });
+
+      const updated = await pool.query(
+        `UPDATE reflection_daily_messages
+           SET content = $2
+         WHERE id = $1
+         RETURNING id, user_id, username, content, created_at`,
+        [id, String(content).trim()]
+      );
+      if (!updated.rows.length) return ack?.({ ok: false, error: "Update failed" });
+
+      const msg = updated.rows[0];
+      io.to(`daily_${found.rows[0].daily_id}`).emit("reflections:message:updated", msg);
+      ack?.({ ok: true, message: msg });
+    } catch (e) {
+      console.error("messageUpdate error:", e);
+      ack?.({ ok: false, error: "Server error" });
+    }
+  });
+
+  // DELETE — owner or admin
+  socket.on("reflections:message:delete", async (payload, ack) => {
+    try {
+      const { id } = payload ?? {};
+      if (!id) return ack?.({ ok: false, error: "Bad payload" });
+
+      const found = await pool.query(
+        `SELECT id, daily_id, user_id FROM reflection_daily_messages WHERE id = $1`,
+        [id]
+      );
+      if (!found.rows.length) return ack?.({ ok: false, error: "Not found" });
+
+      const isOwner = found.rows[0].user_id === socket.user.id;
+      const isAdmin = socket.user.role === "admin";
+      if (!isOwner && !isAdmin) return ack?.({ ok: false, error: "Forbidden" });
+
+      await pool.query(`DELETE FROM reflection_daily_messages WHERE id = $1`, [id]);
+
+      io.to(`daily_${found.rows[0].daily_id}`).emit("reflections:message:deleted", { id });
+      ack?.({ ok: true, id });
+    } catch (e) {
+      console.error("messageDelete error:", e);
+      ack?.({ ok: false, error: "Server error" });
+    }
+  });
+
+  socket.on("disconnect", (reason) => {
+    console.log("Socket disconnected:", socket.id, reason);
+  });
 });
 
-// ----- Start server with auto-retry port -----
+// Start server with auto-retry port
 const DEFAULT_PORT = parseInt(process.env.PORT || "5050", 10);
 
 function startServer(port) {
@@ -171,5 +248,4 @@ function startServer(port) {
       }
     });
 }
-
 startServer(DEFAULT_PORT);

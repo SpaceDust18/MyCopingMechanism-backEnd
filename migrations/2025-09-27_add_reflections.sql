@@ -1,6 +1,7 @@
+-- NON-DESTRUCTIVE: adds reflections tables + indexes if missing
+
 BEGIN;
 
--- Ensure the common trigger function exists (idempotent)
 CREATE OR REPLACE FUNCTION touch_updated_at() RETURNS TRIGGER AS $$
 BEGIN
   NEW.updated_at = now();
@@ -8,7 +9,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 1) Master prompts to pick from
+-- 1) Prompts
 CREATE TABLE IF NOT EXISTS reflection_prompts (
   id SERIAL PRIMARY KEY,
   text TEXT NOT NULL,
@@ -17,14 +18,12 @@ CREATE TABLE IF NOT EXISTS reflection_prompts (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Maintain updated_at on prompt edits
 DROP TRIGGER IF EXISTS reflection_prompts_touch_updated_at ON reflection_prompts;
 CREATE TRIGGER reflection_prompts_touch_updated_at
 BEFORE UPDATE ON reflection_prompts
 FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
--- 2) One “daily prompt” per calendar day
--- (No updated_at here by design; the row is created once per day and not edited.)
+-- 2) Daily prompt
 CREATE TABLE IF NOT EXISTS reflection_daily_prompts (
   id SERIAL PRIMARY KEY,
   prompt_id INTEGER NOT NULL REFERENCES reflection_prompts(id) ON DELETE RESTRICT,
@@ -37,7 +36,7 @@ CREATE INDEX IF NOT EXISTS idx_reflection_daily_prompts_date
 CREATE INDEX IF NOT EXISTS idx_reflection_daily_prompts_prompt
   ON reflection_daily_prompts(prompt_id);
 
--- 3) Messages for the daily thread
+-- 3) Daily messages
 CREATE TABLE IF NOT EXISTS reflection_daily_messages (
   id SERIAL PRIMARY KEY,
   daily_id INTEGER NOT NULL REFERENCES reflection_daily_prompts(id) ON DELETE CASCADE,
@@ -45,22 +44,15 @@ CREATE TABLE IF NOT EXISTS reflection_daily_messages (
   username TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),                 -- ADDED for edit tracking
   CONSTRAINT reflection_message_len CHECK (char_length(content) BETWEEN 1 AND 10000)
 );
-
--- Maintain updated_at on message edits
-DROP TRIGGER IF EXISTS reflection_daily_messages_touch_updated_at ON reflection_daily_messages;
-CREATE TRIGGER reflection_daily_messages_touch_updated_at
-BEFORE UPDATE ON reflection_daily_messages
-FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
 CREATE INDEX IF NOT EXISTS idx_reflection_daily_messages_daily
   ON reflection_daily_messages(daily_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reflection_daily_messages_user
   ON reflection_daily_messages(user_id);
 
--- Optional seed: add a starter active prompt if table is empty
+-- Optional seed prompt
 INSERT INTO reflection_prompts (text, is_active)
 SELECT 'What is one thing you are grateful for today?', TRUE
 WHERE NOT EXISTS (SELECT 1 FROM reflection_prompts);
