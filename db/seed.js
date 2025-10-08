@@ -73,7 +73,8 @@ async function seed() {
     for (const user of users) {
       const res = await client.query(
         `INSERT INTO users (username, email, password)
-         VALUES ($1, $2, $3) RETURNING id`,
+         VALUES ($1, $2, $3)
+         RETURNING id`,
         [user.username, user.email, user.password]
       );
       userIds.push(res.rows[0].id);
@@ -84,7 +85,8 @@ async function seed() {
     for (const post of posts) {
       const res = await client.query(
         `INSERT INTO posts (title, content, author_id)
-         VALUES ($1, $2, $3) RETURNING id`,
+         VALUES ($1, $2, $3)
+         RETURNING id`,
         [post.title, post.content, userIds[post.userIndex]]
       );
       postIds.push(res.rows[0].id);
