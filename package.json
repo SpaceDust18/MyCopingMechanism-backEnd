@@ -9,7 +9,11 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "db:reset": "psql -U claudiabolivar -d mycopingmechanism -f db/schema.sql && psql -U claudiabolivar -d mycopingmechanism -f db/seed.sql",
-    "db:seed": "node db/seed.js"
+    "db:seed": "node db/seed.js",
+    "migrate:latest": "knex migrate:latest --env development",
+    "migrate:rollback": "knex migrate:rollback --env development",
+    "migrate:status": "knex migrate:status --env development",
+    "migrate:make": "knex migrate:make"
   },
   "repository": {
     "type": "git",
