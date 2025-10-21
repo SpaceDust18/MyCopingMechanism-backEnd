@@ -1,43 +1,25 @@
 import pool from "./index.js";
 
-// ----- Existing seed data -----
+// ----- Users -----
 const users = [
   {
     username: "claudia",
     email: "claudia@example.com",
     password: "$2b$12$g9D8q8SMJ.VLhtOKG54OPemnGx0iYho4rjNt2A5oSB8snt3k2FXM.", // already hashed
+    role: "admin"
   },
   {
     username: "marcella",
     email: "marcella@example.com",
     password: "$2b$12$E2L/QZQYkC9Zii/4Pr5CcOY6Cvx7EY1s.j2mZeDBe.GL9UfYcG0uS", // already hashed
-  },
-];
-
-const posts = [
-  {
-    title: "First Post",
-    content: "Welcome to the blog!",
-    userIndex: 0,
+    role: "user"
   },
   {
-    title: "Mental Health Tips",
-    content: "Start with deep breathing and journaling.",
-    userIndex: 1,
-  },
-];
-
-const comments = [
-  {
-    postIndex: 0,
-    userIndex: 1,
-    content: "This is helpful, thank you!",
-  },
-  {
-    postIndex: 1,
-    userIndex: 0,
-    content: "Glad you liked it!",
-  },
+    username: "Queen B",
+    email: "mycopingmechanism83@gmail.com",
+    password: "$2b$12$3hubraMonopy1iAEC1x8vOAijN0yfN.ojn5b.JBsFEvQ4SGAA14TW", // already hashed
+    role: "admin"
+  }
 ];
 
 // ----- Reflection prompts -----
@@ -89,73 +71,43 @@ async function seed() {
   try {
     await client.query("BEGIN");
 
-    // Clear in FK-safe order for reflections + existing data
-    await client.query("DELETE FROM reflection_daily_messages");
-    await client.query("DELETE FROM reflection_daily_prompts");
-    await client.query("DELETE FROM reflection_prompts");
-
-    await client.query("DELETE FROM comments");
-    await client.query("DELETE FROM posts");
-    await client.query("DELETE FROM users");
-
-    // Users
-    const userIds = [];
+    // ✅ Users: upsert instead of delete
     for (const user of users) {
-      const res = await client.query(
-        `INSERT INTO users (username, email, password)
-         VALUES ($1, $2, $3)
-         RETURNING id`,
-        [user.username, user.email, user.password]
-      );
-      userIds.push(res.rows[0].id);
-    }
-
-    // Posts
-    const postIds = [];
-    for (const post of posts) {
-      const res = await client.query(
-        `INSERT INTO posts (title, content, author_id)
-         VALUES ($1, $2, $3)
-         RETURNING id`,
-        [post.title, post.content, userIds[post.userIndex]]
-      );
-      postIds.push(res.rows[0].id);
-    }
-
-    // Comments
-    for (const comment of comments) {
       await client.query(
-        `INSERT INTO comments (content, post_id, user_id)
-         VALUES ($1, $2, $3)`,
-        [comment.content, postIds[comment.postIndex], userIds[comment.userIndex]]
+        `INSERT INTO users (username, email, password, role)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (email) DO UPDATE
+         SET role = EXCLUDED.role`,
+        [user.username, user.email, user.password, user.role]
       );
     }
 
-    // Reflection prompts
-    const promptIds = [];
+    // ✅ Reflection prompts: insert if not already present
     for (const text of reflectionPrompts) {
-      const res = await client.query(
+      await client.query(
         `INSERT INTO reflection_prompts (text, is_active)
          VALUES ($1, TRUE)
-         RETURNING id`,
+         ON CONFLICT (text) DO NOTHING`,
         [text]
       );
-      promptIds.push(res.rows[0].id);
     }
 
-    // Pick today's prompt (random) and create daily record
-    const pickIndex = Math.floor(Math.random() * promptIds.length);
-    const pickedPromptId = promptIds[pickIndex];
+    // ✅ Random daily prompt (still refreshed daily)
+    const { rows } = await client.query(`SELECT id FROM reflection_prompts`);
+    if (rows.length > 0) {
+      const pickIndex = Math.floor(Math.random() * rows.length);
+      const pickedPromptId = rows[pickIndex].id;
 
-    await client.query(
-      `INSERT INTO reflection_daily_prompts (prompt_id, active_on)
-       VALUES ($1, CURRENT_DATE)
-       ON CONFLICT (active_on) DO UPDATE SET prompt_id = EXCLUDED.prompt_id`,
-      [pickedPromptId]
-    );
+      await client.query(
+        `INSERT INTO reflection_daily_prompts (prompt_id, active_on)
+         VALUES ($1, CURRENT_DATE)
+         ON CONFLICT (active_on) DO UPDATE SET prompt_id = EXCLUDED.prompt_id`,
+        [pickedPromptId]
+      );
+    }
 
     await client.query("COMMIT");
-    console.log("✅ Database seeded successfully (users, posts, comments, prompts)!");
+    console.log("✅ Database seeded successfully (users, prompts, daily reflection)!");
     process.exit(0);
   } catch (err) {
     await client.query("ROLLBACK");
