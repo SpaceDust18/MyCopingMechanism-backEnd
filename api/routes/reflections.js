@@ -65,13 +65,12 @@ router.get("/today/messages", async (_req, res) => {
       `SELECT id FROM reflection_daily_prompts WHERE active_on = CURRENT_DATE`
     );
     if (!today.rows.length) {
-      // If no daily prompt yet, return empty list (the /today endpoint will create one on fetch)
       return res.json([]);
     }
     const dailyId = today.rows[0].id;
 
     const rows = await pool.query(
-      `SELECT id, user_id, username, content, created_at   -- include user_id for ownership
+      `SELECT id, user_id, username, content, created_at
          FROM reflection_daily_messages
         WHERE daily_id = $1
      ORDER BY created_at ASC
@@ -82,6 +81,27 @@ router.get("/today/messages", async (_req, res) => {
   } catch (e) {
     console.error("GET /api/reflections/today/messages error:", e);
     return res.status(500).json({ error: "Unable to fetch messages" });
+  }
+});
+
+/** GET /api/reflections/random (requires JWT)
+ * Alias to today's prompt — everyone sees the same one each day
+ */
+router.get("/random", verifyToken, async (_req, res) => {
+  const client = await pool.connect();
+  try {
+    const daily = await ensureTodayDailyPrompt(client);
+    return res.json({
+      ok: true,
+      daily_id: daily.id,
+      active_on: daily.active_on,
+      prompt: { id: daily.prompt_id, text: daily.text },
+    });
+  } catch (err) {
+    console.error("GET /api/reflections/random error:", err);
+    return res.status(500).json({ error: "Server error" });
+  } finally {
+    client.release();
   }
 });
 

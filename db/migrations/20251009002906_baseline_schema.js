@@ -115,6 +115,44 @@ export async function up(knex) {
         table.index(['daily_id'], 'idx_reflection_daily_messages_daily');
         table.index(['user_id'], 'idx_reflection_daily_messages_user');
     });
+
+    // -------------------
+    // QUOTES + WEEKLY CHAT
+    // -------------------
+
+    await knex.schema.createTable('quotes', (table) => {
+        table.increments('id').primary();
+        table.text('text').notNullable();
+        table.text('author');
+        table.boolean('is_active').notNullable().defaultTo(true);
+        table.timestamp('created_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
+        table.timestamp('updated_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
+    });
+
+    await knex.schema.createTable('weekly_quotes', (table) => {
+        table.increments('id').primary();
+        table.integer('quote_id').notNullable().references('id').inTable('quotes').onDelete('CASCADE');
+        table.date('active_week').notNullable().unique();
+        table.timestamp('created_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
+        table.timestamp('updated_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
+
+        table.index(['active_week'], 'idx_weekly_quotes_active_week');
+        table.index(['quote_id'], 'idx_weekly_quotes_quote_id');
+    });
+
+    await knex.schema.createTable('weekly_quote_messages', (table) => {
+        table.increments('id').primary();
+        table.integer('weekly_id').notNullable().references('id').inTable('weekly_quotes').onDelete('CASCADE');
+        table.integer('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.text('username');
+        table.text('content').notNullable();
+        table.timestamp('created_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
+        table.timestamp('updated_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
+
+        table.check('char_length(content) >= 1 AND char_length(content) <= 2000');
+        table.index(['weekly_id', 'created_at'], 'idx_weekly_quote_messages_weekly_created');
+        table.index(['user_id'], 'idx_weekly_quote_messages_user');
+    });
 }
 
 /**
@@ -122,6 +160,9 @@ export async function up(knex) {
  * @returns { Promise<void> }
  */
 export async function down(knex) {
+    await knex.schema.dropTableIfExists('weekly_quote_messages');
+    await knex.schema.dropTableIfExists('weekly_quotes');
+    await knex.schema.dropTableIfExists('quotes');
     await knex.schema.dropTableIfExists('reflection_daily_messages');
     await knex.schema.dropTableIfExists('reflection_daily_prompts');
     await knex.schema.dropTableIfExists('reflection_prompts');

@@ -40,18 +40,48 @@ const comments = [
   },
 ];
 
-// ----- New: reflection prompts & sample daily messages -----
+// ----- Reflection prompts -----
 const reflectionPrompts = [
-  "What is one small win you had today",
-  "What helps you feel grounded when life feels heavy",
-  "Name one thing you would tell your younger self",
-  "What can you do in the next ten minutes to care for yourself",
-];
-
-const sampleReflectionMessages = [
-  { username: "claudia", content: "Grateful for a calm moment with tea." },
-  { username: "marcella", content: "I took a short walk and felt better." },
-  { username: "Anonymous", content: "Listened to my favorite song on repeat." },
+  "What is one small win you had today?",
+  "What helps you feel grounded when life feels heavy?",
+  "Name one thing you would tell your younger self?",
+  "What can you do in the next ten minutes to care for yourself?",
+  "What made you smile today?",
+  "What are three things you're grateful for right now?",
+  "What emotion stood out to you today, and why?",
+  "What would you like to let go of?",
+  "What does ‘rest’ mean to you?",
+  "Describe one moment today where you felt calm.",
+  "What’s something kind you can say to yourself right now?",
+  "Who or what inspired you today?",
+  "What’s a goal you’re working toward, and how do you feel about it?",
+  "When was the last time you felt proud of yourself?",
+  "What does self-care look like for you this week?",
+  "What is something you learned about yourself recently?",
+  "What are your top three priorities this month?",
+  "How would you describe your mood in one word?",
+  "What’s something you can forgive yourself for?",
+  "How do you show kindness to others?",
+  "What’s a recent challenge that helped you grow?",
+  "What brings you peace when things feel overwhelming?",
+  "If you could talk to your future self, what would you ask?",
+  "What habit would you like to build or strengthen?",
+  "What are you most looking forward to tomorrow?",
+  "What’s a way you can express creativity this week?",
+  "What makes you feel safe and supported?",
+  "When do you feel most like yourself?",
+  "What’s a lesson you’ve learned the hard way?",
+  "What boundaries do you want to protect?",
+  "Describe something simple that brings you joy.",
+  "What would make tomorrow a good day?",
+  "What motivates you when you feel stuck?",
+  "How do you take care of your mental health?",
+  "Who makes you feel supported, and why?",
+  "What’s a kind message you wish someone would tell you?",
+  "How can you celebrate yourself today?",
+  "What do you want to remember about this week?",
+  "If you could give yourself one piece of advice, what would it be?",
+  "What matters most to you right now?"
 ];
 
 async function seed() {
@@ -117,38 +147,19 @@ async function seed() {
     const pickIndex = Math.floor(Math.random() * promptIds.length);
     const pickedPromptId = promptIds[pickIndex];
 
-    const dailyRes = await client.query(
+    await client.query(
       `INSERT INTO reflection_daily_prompts (prompt_id, active_on)
        VALUES ($1, CURRENT_DATE)
-       ON CONFLICT (active_on) DO UPDATE SET prompt_id = EXCLUDED.prompt_id
-       RETURNING id`,
+       ON CONFLICT (active_on) DO UPDATE SET prompt_id = EXCLUDED.prompt_id`,
       [pickedPromptId]
     );
-    const dailyId = dailyRes.rows[0].id;
-
-    // Map usernames to user IDs for sample messages
-    const usernameToId = new Map();
-    const usersRes = await client.query(`SELECT id, username FROM users`);
-    for (const row of usersRes.rows) {
-      usernameToId.set(row.username, row.id);
-    }
-
-    // Seed a few public chat messages for today
-    for (const m of sampleReflectionMessages) {
-      const uid = usernameToId.get(m.username) ?? null;
-      await client.query(
-        `INSERT INTO reflection_daily_messages (daily_id, user_id, username, content)
-         VALUES ($1, $2, $3, $4)`,
-        [dailyId, uid, m.username, m.content]
-      );
-    }
 
     await client.query("COMMIT");
-    console.log("Database seeded successfully (users, posts, comments, reflections)!");
+    console.log("✅ Database seeded successfully (users, posts, comments, prompts)!");
     process.exit(0);
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("Error seeding database:", err);
+    console.error("❌ Error seeding database:", err);
     process.exit(1);
   } finally {
     client.release();
